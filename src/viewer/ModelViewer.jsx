@@ -4,17 +4,15 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
 /**
  * Renders a Minecraft Java block model or Hytale .blockymodel in Three.js.
- * MC: reads elements[].from/to as box geometry.
- * Hytale: reads nodes recursively, shape.type === 'box' → box geometry.
+ * Exposes renderer/scene/camera via sceneRef for icon snapshot.
  */
-export default function ModelViewer({ model, modelType }) {
+export default function ModelViewer({ model, modelType, sceneRef }) {
   const mountRef = useRef(null)
 
   useEffect(() => {
     const el = mountRef.current
     if (!el) return
 
-    // Scene setup
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0x111827)
 
@@ -22,7 +20,8 @@ export default function ModelViewer({ model, modelType }) {
     camera.position.set(30, 30, 30)
     camera.lookAt(8, 8, 8)
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    // preserveDrawingBuffer required for toDataURL() in icon maker
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true })
     renderer.setSize(el.clientWidth, el.clientHeight)
     el.appendChild(renderer.domElement)
 
@@ -30,18 +29,17 @@ export default function ModelViewer({ model, modelType }) {
     controls.target.set(8, 8, 8)
     controls.update()
 
-    // Grid
-    const grid = new THREE.GridHelper(32, 32, 0x374151, 0x1f2937)
-    scene.add(grid)
+    // Expose to parent for icon snapshot
+    if (sceneRef) sceneRef.current = { renderer, scene, camera }
 
-    // Lights
+    // Grid + lights
+    scene.add(new THREE.GridHelper(32, 32, 0x374151, 0x1f2937))
     scene.add(new THREE.AmbientLight(0xffffff, 0.6))
     const dir = new THREE.DirectionalLight(0xffffff, 0.8)
     dir.position.set(20, 40, 20)
     scene.add(dir)
 
-    // Build geometry
-    const mat = new THREE.MeshLambertMaterial({ color: 0x60a5fa, wireframe: false })
+    const mat     = new THREE.MeshLambertMaterial({ color: 0x60a5fa })
     const wireMat = new THREE.MeshBasicMaterial({ color: 0x93c5fd, wireframe: true })
 
     if (modelType === 'mc') {
@@ -50,7 +48,6 @@ export default function ModelViewer({ model, modelType }) {
       addHytaleNodes(scene, model.nodes ?? [], mat, wireMat, { x: 0, y: 0, z: 0 })
     }
 
-    // Animate
     let frameId
     const animate = () => {
       frameId = requestAnimationFrame(animate)
@@ -59,7 +56,6 @@ export default function ModelViewer({ model, modelType }) {
     }
     animate()
 
-    // Resize
     const onResize = () => {
       camera.aspect = el.clientWidth / el.clientHeight
       camera.updateProjectionMatrix()
@@ -70,6 +66,7 @@ export default function ModelViewer({ model, modelType }) {
     return () => {
       cancelAnimationFrame(frameId)
       window.removeEventListener('resize', onResize)
+      if (sceneRef) sceneRef.current = null
       renderer.dispose()
       el.removeChild(renderer.domElement)
     }
@@ -83,20 +80,13 @@ export default function ModelViewer({ model, modelType }) {
 function addMcElements(scene, elements, mat, wireMat) {
   for (const el of elements) {
     const { from, to } = el
-    const w = to[0] - from[0]
-    const h = to[1] - from[1]
-    const d = to[2] - from[2]
-    const geo = new THREE.BoxGeometry(w, h, d)
+    const geo = new THREE.BoxGeometry(to[0]-from[0], to[1]-from[1], to[2]-from[2])
     const mesh = new THREE.Mesh(geo, mat)
-    mesh.position.set(
-      (from[0] + to[0]) / 2,
-      (from[1] + to[1]) / 2,
-      (from[2] + to[2]) / 2,
-    )
+    mesh.position.set((from[0]+to[0])/2, (from[1]+to[1])/2, (from[2]+to[2])/2)
     scene.add(mesh)
-    scene.add(new THREE.Mesh(geo, wireMat).position.copy(mesh.position) && mesh.clone().copy(
-      Object.assign(new THREE.Mesh(geo, wireMat), { position: mesh.position.clone() })
-    ))
+    const wire = new THREE.Mesh(geo, wireMat)
+    wire.position.copy(mesh.position)
+    scene.add(wire)
   }
 }
 
@@ -109,7 +99,6 @@ function addHytaleNodes(scene, nodes, mat, wireMat, parentPos) {
       y: parentPos.y + (node.position?.y ?? 0),
       z: parentPos.z + (node.position?.z ?? 0),
     }
-
     if (node.shape?.type === 'box') {
       const s = node.shape.settings?.size ?? { x: 1, y: 1, z: 1 }
       const o = node.shape.offset ?? { x: 0, y: 0, z: 0 }
@@ -117,10 +106,10 @@ function addHytaleNodes(scene, nodes, mat, wireMat, parentPos) {
       const mesh = new THREE.Mesh(geo, mat)
       mesh.position.set(worldPos.x + o.x, worldPos.y + o.y, worldPos.z + o.z)
       scene.add(mesh)
+      const wire = new THREE.Mesh(geo, wireMat)
+      wire.position.copy(mesh.position)
+      scene.add(wire)
     }
-
-    if (node.children?.length) {
-      addHytaleNodes(scene, node.children, mat, wireMat, worldPos)
-    }
+    if (node.children?.length) addHytaleNodes(scene, node.children, mat, wireMat, worldPos)
   }
 }

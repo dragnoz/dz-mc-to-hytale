@@ -96,28 +96,22 @@ function makeBoxNode(element, parentPivot) {
 
 // ── Pivot / bone builder ──────────────────────────────────────────────────────
 
-/**
- * Groups all MC elements into a single root bone.
- * Pivot = centre of the bounding box of all elements combined.
- * For animated/multi-bone models this would be expanded per-group.
- */
-function buildRootBone(elements) {
-  const allFrom = elements.map(e => e.from);
-  const allTo   = elements.map(e => e.to);
+function bboxPivot(elements) {
+  if (elements.length === 0) return vec3(8, 0, 8);
+  const minX = Math.min(...elements.map(e => e.from[0]));
+  const minY = Math.min(...elements.map(e => e.from[1]));
+  const minZ = Math.min(...elements.map(e => e.from[2]));
+  const maxX = Math.max(...elements.map(e => e.to[0]));
+  const maxZ = Math.max(...elements.map(e => e.to[2]));
+  return vec3((minX + maxX) / 2, minY, (minZ + maxZ) / 2);
+}
 
-  const minX = Math.min(...allFrom.map(v => v[0]));
-  const minY = Math.min(...allFrom.map(v => v[1]));
-  const minZ = Math.min(...allFrom.map(v => v[2]));
-  const maxX = Math.max(...allTo.map(v => v[0]));
-  const maxY = Math.max(...allTo.map(v => v[1]));
-  const maxZ = Math.max(...allTo.map(v => v[2]));
-
-  const pivot = vec3((minX + maxX) / 2, minY, (minZ + maxZ) / 2); // bottom-centre pivot
-
-  const bone = {
+function makeBoneNode(name, elements) {
+  const pivot = bboxPivot(elements);
+  return {
     id: nextId(),
-    name: 'Root',
-    position: vec3(0, 0, 0),
+    name: name || 'Bone',
+    position: pivot,
     orientation: identityQuat(),
     shape: {
       type: 'none',
@@ -132,8 +126,38 @@ function buildRootBone(elements) {
     },
     children: elements.map(e => makeBoxNode(e, pivot)),
   };
+}
 
-  return bone;
+/**
+ * Build hierarchy from MC groups array (recursive — groups can contain sub-groups).
+ * Falls back to a single root bone if no groups defined.
+ */
+function buildHierarchy(mcGroups, elements) {
+  if (!mcGroups || mcGroups.length === 0) {
+    return [makeBoneNode('Root', elements)];
+  }
+
+  return mcGroups.map(group => {
+    if (typeof group === 'number') return null; // ungrouped element index — skip at this level
+
+    const directElements = (group.children ?? [])
+      .filter(c => typeof c === 'number')
+      .map(i => elements[i])
+      .filter(Boolean);
+
+    const subGroups = (group.children ?? []).filter(c => typeof c === 'object');
+
+    const bone = makeBoneNode(group.name ?? 'Bone', directElements);
+
+    if (subGroups.length > 0) {
+      bone.children = [
+        ...bone.children,
+        ...buildHierarchy(subGroups, elements),
+      ];
+    }
+
+    return bone;
+  }).filter(Boolean);
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
@@ -158,17 +182,18 @@ export function convertMcToHytale(mcJson, name = 'Model') {
   // Name each element
   elements.forEach((e, i) => { e.__name = `box_${i}`; });
 
-  const rootBone = buildRootBone(elements);
-  rootBone.name = name;
+  const nodes = buildHierarchy(mcJson.groups ?? [], elements);
+  if (nodes.length === 1) nodes[0].name = name;
 
-  // Node count check (root bone + all boxes)
-  const totalNodes = 1 + elements.length;
+  // Node count (recursive) — validator does the full check, this is a quick warn
+  function countAll(ns) { return ns.reduce((t, n) => t + 1 + countAll(n.children ?? []), 0); }
+  const totalNodes = countAll(nodes);
   if (totalNodes > MAX_NODES) {
     warnings.push(`Node count ${totalNodes} exceeds the 255-node Hytale limit. Model may fail engine validation.`);
   }
 
   const model = {
-    nodes: [rootBone],
+    nodes,
     lod: 'auto',
   };
 

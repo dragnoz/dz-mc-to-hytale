@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import DropZone from './components/DropZone'
 import ModelViewer from './viewer/ModelViewer'
 import ConvertPanel from './components/ConvertPanel'
@@ -7,8 +7,9 @@ import './index.css'
 
 export default function App() {
   const [model, setModel] = useState(null)
-  const [modelType, setModelType] = useState(null) // 'mc' | 'hytale'
+  const [modelType, setModelType] = useState(null)
   const [error, setError] = useState(null)
+  const sceneRef = useRef(null) // shared renderer/scene/camera for icon maker
 
   const handleFile = useCallback((file) => {
     setError(null)
@@ -38,19 +39,19 @@ export default function App() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <aside className="w-72 border-r border-gray-800 flex flex-col gap-4 p-4">
+        <aside className="w-72 border-r border-gray-800 flex flex-col gap-4 p-4 overflow-y-auto">
           <DropZone onFile={handleFile} />
           {error && (
             <div className="text-xs text-red-400 bg-red-950 rounded p-2">{error}</div>
           )}
           {model && (
-            <ConvertPanel model={model} modelType={modelType} />
+            <ConvertPanel model={model} modelType={modelType} sceneRef={sceneRef} />
           )}
         </aside>
 
         <main className="flex-1">
           {model
-            ? <ModelViewer model={model} modelType={modelType} />
+            ? <ModelViewer model={model} modelType={modelType} sceneRef={sceneRef} />
             : (
               <div className="h-full flex items-center justify-center text-gray-600 text-sm">
                 Drop a .json or .blockymodel file to preview
